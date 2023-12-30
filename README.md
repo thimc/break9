@@ -12,8 +12,6 @@ a [breakout](https://en.wikipedia.org/wiki/Breakout_(video_game)) clone for 9fro
 
 → / l to move the player to the right.
 
-Right click to open up the menu.
-
 q to quit.
 
 # TODO
