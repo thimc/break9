@@ -5,268 +5,242 @@
 #include <mouse.h>
 #include <keyboard.h>
 
-#define INTERVAL 40
+enum {
+	Ninterval = 20,
+	Width = 800,
+	Height = 600,
+	Ncellsize = 18,
+	Nblockwidth = 6,
+	Nblockheight = 2,
+	Nblockoffset = 1,
+	Nblockoffseth = .5,
+	Ntxtoffset = 1.5,
+	Nblockrows = 4,
+	Nplayerwidth = 7,
+};
 
-#define WIDTH 800
-#define HEIGHT 600
-
-#define CELL_DIV 36
-#define OFFSET_X 1
-#define OFFSET_Y 1
-#define PLAYER_SIZE 8
-#define BLOCK_SIZE 3
-#define BLOCK_GAP 1
+#define PLAYER_SIZE 6
+#define BLOCK_GAP 4
 #define BLOCK_ROWS 5
 #define BLOCK_OFFSET 0
 
 #define CLAMP(x,min,max) (x)<(min)?(min):(x)>(max)?(max):(x)
+#define ptstorect(p1,p2) (Rectangle)(Rect(p1.x,p1.y,p1.x+p2.x,p1.y+p2.y))
 
-#define scrx (int)(screen->r.min.x)
-#define scry (int)(screen->r.min.y)
-#define scrmx (int)(screen->r.max.x)
-#define scrmy (int)(screen->r.max.y)
-#define scrw (int)(scrmx - scrx)
-#define scrh (int)(scrmy - scry)
-
-#define cell_size (int)(scrw)/(int)CELL_DIV
-#define ball_size (int)cell_size
-#define grw (int)(scrw)/(cell_size)
-#define grh (int)(scrh)/(cell_size)
+#define ballsize (int)(Ncellsize/2)
+#define gridwidth (int)(Dx(screen->r))/(Ncellsize)
+#define gridheight (int)(Dy(screen->r))/(Ncellsize)
+#define Cell(n) (int)(n * Ncellsize)
 
 typedef struct block Block;
 struct block
 {
-	int x, y, w, h, health;
-};
-
-typedef struct player Player;
-struct player
-{
-	int x, y;
+	Rectangle r;
+	int health;
 };
 
 typedef struct ball Ball;
 struct ball
 {
-	int x, y, dx, dy;
+	Point pt;
+	int dx, dy;
 };
 
-char *menustr[] = { "pause", "exit", nil };
-Menu menu = { menustr };
-
 Ball ball;
-Player player;
+Rectangle player;
 Block *blocks;
-int running;
+int running, score;
+char buf[64];
 
 Mousectl *mctl;
 Keyboardctl *kctl;
+Channel *drawc;
 
 Image *bg, *fg, *playerfg, *playerborderfg, *ballfg, *blockfg, *blockborderfg;
-
-char buf[64] = {0};
-
-void draw_block(Block, Image*);
-void draw_player(int, int);
-void updateball(void);
-void checkcollision(void);
-void draw_ball(int, int);
-
-
-void
-draw_block(Block b, Image *col)
-{
-	Rectangle r = Rect(scrx + (b.x * cell_size) + BLOCK_GAP,
-		scry + (b.y * cell_size) + (b.h * cell_size),
-		scrx + (b.x * cell_size) - BLOCK_GAP + (b.w * cell_size),
-		scry + (b.y * cell_size) + cell_size - BLOCK_GAP + (b.h * cell_size));
-
-	draw(screen, r, col, nil, ZP);
-	border(screen, r, 2, blockborderfg, ZP);
-}
-
-void
-draw_player(int x, int y)
-{
-	Rectangle r = Rect(scrx + (x * cell_size) + BLOCK_GAP,
-		scry + (y * cell_size) + (cell_size / 2),
-		scrx + (x * cell_size) - BLOCK_GAP + (PLAYER_SIZE * cell_size),
-		scry + (y * cell_size) - BLOCK_GAP + (cell_size * 1.25));
-
-	draw(screen, r, playerfg, nil, ZP);
-	border(screen, r, 1, playerborderfg, ZP);
-}
-
-void
-updateball(void)
-{
-	if(ball.x<=0||ball.x>=grw-1)
-		ball.dx *= -1;
-	if(ball.y<=0||ball.y>=grh)
-		ball.dy *= -1;
-
-	ball.x += ball.dx;
-	ball.y += ball.dy;
-}
-
-void
-checkcollision(void)
-{
-	int i;
-	snprint(buf, sizeof buf, " ");
-
-	if((ball.y >= player.y && ball.y  <= player.y + PLAYER_SIZE)
-		&& (ball.x > player.x && ball.x <= player.x + PLAYER_SIZE)){
-		snprint(buf, sizeof buf, "!");
-		ball.y -= 2;
-		ball.dy *= -1;
-	}
-
-	for(i=0; i<BLOCK_ROWS*grw; i++){
-		if((ball.y-1 >= blocks[i].y && ball.y-1 <= blocks[i].y + blocks[i].h)
-			&& (ball.x-1 > blocks[i].x && ball.x-1 <= blocks[i].x + blocks[i].w)){
-			if(!blocks[i].health) break;
-
-			blocks[i].health = 0;
-			ball.y += 1;
-			ball.dy *= -1;
-			break;
-		}
-	}
-
-}
-
-void
-draw_ball(int x, int y)
-{
-	fillellipse(screen, Pt(scrx + (x * cell_size) + (ball_size / 2),
-		scry + (y * cell_size) + (ball_size / 2)),
-		ball_size/2, ball_size/2, blockfg, ZP);
-}
 
 void
 redraw(void)
 {
-	int i, j;
+	int i;
 
 	draw(screen, screen->r, bg, nil, ZP);
+	string(screen, addpt(screen->r.min, Pt(
+			Dx(screen->r)/2 - (stringwidth(display->defaultfont, buf)/2)
+			, display->defaultfont->height / 2)),
+		display->black, ZP, display->defaultfont, buf);
 
-	if(!running){
-		snprint(buf, sizeof buf, "<paused>");
+	// draw blocks
+	for(i=0; i<(Nblockrows * (gridwidth / Nblockwidth)); i++){
+		if(!blocks[i].health) continue;
+		draw(screen, rectaddpt(blocks[i].r, screen->r.min), blockfg, nil, ZP);
+		border(screen, rectaddpt(blocks[i].r, screen->r.min), 2, blockborderfg, ZP);
 	}
 
-	string(screen,
-		addpt(Pt(scrx, scry),
-		Pt((scrw/2)-(stringwidth(display->defaultfont, buf)/2), 10)),
-		fg, ZP, display->defaultfont, buf);
+	// draw ball
+	fillellipse(screen, addpt(screen->r.min, ball.pt),
+		ballsize, ballsize, ballfg, ZP);
 
-
-	for(i=0; i<BLOCK_ROWS; i++){
-		for(j=0; j<grw; j++){
-			if(blocks[(j*BLOCK_ROWS)+i].health > 0)
-				draw_block(blocks[(j*BLOCK_ROWS)+i], ballfg);
-		}
-	}
-
-	draw_player(player.x, player.y);
-	draw_ball(ball.x, ball.y);
+	// draw player
+	draw(screen, rectaddpt(player, screen->r.min), playerfg, nil, ZP);
+	border(screen, rectaddpt(player, screen->r.min), 1, playerborderfg, ZP);
 
 	flushimage(display, 1);
 }
 
 void
-eresize(void)
+resizeproc(void*)
 {
-	player.y = grh-2;
-	redraw();
-}
-
-void
-emouse(Mouse *m)
-{
-	if(m->buttons != 4)
-		return;
-	switch(menuhit(3, mctl, &menu, nil)){
-	case 0:
-		running = !running;
-		if(running)
-			sprint(menustr[0], "pause");
-		else
-			sprint(menustr[0], "play");
-		break;
-	case 1:
-		threadexitsall(nil);
-	}
-}
-
-void
-ekeyboard(Rune k)
-{
-	if(!running) return;
-	switch(k){
-	case 'q':
-	case Kdel:
-		free(blocks);
-		threadexitsall(nil);
-		break;
-	case 'h':
-	case Kleft:
-		player.x = CLAMP(player.x-1,0,grw);
-		break;
-	case 'l':
-	case Kright:
-		player.x = CLAMP(player.x+1,0,grw-PLAYER_SIZE);	
-		break;
-	}
-}
-
-void
-usage(void)
-{
-	fprint(2, "usage: %s\n", argv0);
-	threadexitsall("usage");
-}
-
-void
-timerproc(void *c)
-{
-	threadsetname("timer");
+	threadsetname("resizeproc");
 	for(;;){
-		sleep(INTERVAL);
-		sendul(c, 0);
+		recvul(mctl->resizec);
+		if (getwindow(display, Refnone) < 0)
+			sysfatal("getwindow: %r");
+		redraw();
 	}
 }
 
 void
-threadmain(int argc, char *argv[])
+kbdproc(void*)
 {
-	enum { Emouse, Eresize, Ekeyboard, Etimer };
-	Mouse m;
-	Rune k;
-	Alt a[] = {
-		{ nil, &m,  CHANRCV },
-		{ nil, nil, CHANRCV },
-		{ nil, &k,  CHANRCV },
-		{ nil, nil, CHANRCV },
-		{ nil, nil, CHANEND },
-	};
-	int n, i, j;
+	Rune r;
 
-	ARGBEGIN{ }ARGEND;
+	threadsetname("kbdproc");
+	for(;;){
+		recv(kctl->c, &r);
+		switch(r){
+		case 'p':
+			running =!running;
+			break;
+		case 'q':
+		case Kdel:
+			free(blocks);
+			closemouse(mctl);
+			closekeyboard(kctl);
+			closedisplay(display);
+			threadexitsall(nil);
+			break;
+		case 'h':
+		case Kleft:
+			if(!running) return;
+			player.min.x = CLAMP(player.min.x - Cell(1), 0, Cell(gridwidth));
+			player.max.x = CLAMP(player.max.x - Cell(1), Cell(Nplayerwidth), Cell(gridwidth));
+			break;
+		case 'l':
+		case Kright:
+			if(!running) return;
+			player.min.x = CLAMP(player.min.x + Cell(1), 0, Cell(gridwidth)-Cell(Nplayerwidth));
+			player.max.x = CLAMP(player.max.x + Cell(1), 0, Cell(gridwidth));
+			break;
+		}
+	}
+}
 
-	if(initdraw(nil, nil, argv0) < 0)
-		sysfatal("initdraw: %r");
-	if((mctl = initmouse(nil, screen)) == nil)
-		sysfatal("initmouse: %r");
-	if((kctl = initkeyboard(nil)) == nil)
-		sysfatal("initkeyboard: %r");
+void
+timerproc(void *)
+{
+	threadsetname("timerproc");
+	for(;;){
+		sleep(Ninterval);
+		sendul(drawc, 0);
+		redraw();
+	}
+}
 
-	a[Emouse].c = mctl->c;
-	a[Eresize].c = mctl->resizec;
-	a[Ekeyboard].c = kctl->c;
-	a[Etimer].c = chancreate(sizeof(ulong), 0);
-	proccreate(timerproc, a[Etimer].c, 2048);
+void
+gamethread(void*)
+{
+	int i;
 
+	threadsetname("gameproc");
+	for(;;){
+		recvul(drawc);
+		if(running){
+
+			// update ball
+			if(ball.pt.x-ballsize <= 0 || ball.pt.x >= Cell(gridwidth))
+				ball.dx *= -1;
+			if(ball.pt.y-ballsize <= 0 || ball.pt.y >= Cell(gridheight))
+				ball.dy *= -1;
+			ball.pt = addpt(ball.pt, Pt(Cell(ball.dx)/2, Cell(ball.dy)/2));
+
+			// check player collision
+			if(ptinrect(ball.pt, player)){
+				ball.pt.y -= ballsize;
+				ball.dy *= -1;
+			}
+
+			for(i=0; i<Nblockrows*(gridwidth/Nblockwidth); i++){
+				if(ptinrect(ball.pt, blocks[i].r) && blocks[i].health){
+					blocks[i].health--;
+					ball.pt.y += Cell(1);
+					ball.dy *= -1;
+					if(!blocks[i].health)
+						score++;
+					snprint(buf, sizeof buf, "%d point(s)", score);
+				}
+			}
+
+			// check death
+			if(ball.pt.y > player.max.y){
+				snprint(buf, sizeof buf, "you lost buddy, %d point(s)", score);
+				running = 0;
+			}
+		}
+		redraw();
+	}
+}
+
+void
+resize(int x, int y)
+{
+	int fd;
+
+	if((fd = open("/dev/wctl", OWRITE))){
+		fprint(fd, "resize -dx %d -dy %d", x, y);
+		close(fd);
+	}
+}
+
+void
+initgame(void)
+{
+	Point pt;
+	int i;
+
+	ball.pt = Pt(Cell(gridwidth / 2), Cell(gridheight / 2));
+	ball.dx = ball.dy = -1;
+
+	pt = Pt(Cell(gridwidth / 2), Cell(gridheight));
+	player = Rect(
+		pt.x - Cell(Nplayerwidth/2),
+		pt.y - Cell(2),
+		pt.x + Cell(Nplayerwidth/2),
+		pt.y - Cell(1)
+	);
+
+	if((blocks = malloc(sizeof(*blocks) * (Nblockrows*(gridwidth/Nblockwidth)))) == nil)
+		sysfatal("malloc: %r");
+
+	for(i=0; i<Nblockrows*(gridwidth/Nblockwidth); i++){
+		pt = Pt(
+			Cell(Nblockoffset) + ((i % (gridwidth / Nblockwidth)) * Cell(Nblockwidth)),
+			Cell(Ntxtoffset) + Cell(Nblockoffseth) + ((i / (gridwidth / Nblockwidth)) * Cell(Nblockheight))
+		);
+		blocks[i].r = Rect(
+			pt.x,
+			pt.y + Cell(Ntxtoffset),
+			pt.x + Cell(Nblockwidth) - (Cell(Nblockoffset) / 2),
+			pt.y + Cell(Nblockheight) + Cell(Ntxtoffset) - Cell(Nblockoffseth)
+		);
+		blocks[i].health = 1;
+	}
+
+	running = 1;
+}
+
+void
+loadtheme(void)
+{
 	// TODO: read from /dev/theme
 	bg = allocimagemix(display, DPalebluegreen, DWhite);
 	fg = allocimage(display, Rect(0, 0, 1, 1), RGB24, 1, DBlack);
@@ -275,53 +249,28 @@ threadmain(int argc, char *argv[])
 	ballfg = allocimage(display, Rect(0,0,1,1), RGB24, 1, 0xE47674FF);
 	blockfg = allocimage(display, Rect(0,0,1,1), RGB24, 1, 0x72DEC2FF);
 	blockborderfg = allocimage(display, Rect(0,0,1,1), RGB24, 1, 0x555555FF);
+}
 
-	player.x = grw/2-(PLAYER_SIZE/2)-1;
+void
+threadmain(int, char *[])
+{
+	if(initdraw(nil, nil, argv0) < 0)
+		sysfatal("initdraw: %r");
+	if((mctl = initmouse(nil, nil)) == nil)
+		sysfatal("initmouse: %r");
+	if((kctl = initkeyboard(nil)) == nil)
+		sysfatal("initkeyboard: %r");
+	drawc = chancreate(sizeof(ulong), 0);
 
-	ball.x = grw/2-1;
-	ball.y = grh-4;
-	ball.dx = 1;
-	ball.dy = 1;
+	resize(Width, Height);
 
-	blocks = malloc(sizeof(*blocks) * (grw * BLOCK_ROWS));
-	if(!blocks)
-		sysfatal("malloc blocks: %r");
+	loadtheme();
+	initgame();
 
-	n = 0;
-	for(i=0; i<BLOCK_ROWS; i++){
-		for(j=0; j<grw; j++){
-			blocks[(j*BLOCK_ROWS)+i].y = i+BLOCK_OFFSET;
-			blocks[(j*BLOCK_ROWS)+i].x = n;
-			blocks[(j*BLOCK_ROWS)+i].w = BLOCK_SIZE;
-			blocks[(j*BLOCK_ROWS)+i].h = 2;
-			blocks[(j*BLOCK_ROWS)+i].health = 1; // BLOCK_ROWS-i;
-			n=j*BLOCK_SIZE;
-		}
-	}
+	proccreate(timerproc, nil, 8*1024);
+	threadcreate(resizeproc, nil, 8*1024);
+	threadcreate(kbdproc, nil, 8*1024);
+	threadcreate(gamethread, nil, 8*1024);
 
-	running = 1;
-	eresize();
-	for(;;){
-		switch(alt(a)){
-		case Emouse:
-			emouse(&m);
-			break;
-		case Eresize:
-			if(getwindow(display, Refnone) < 0)
-				sysfatal("getwindow: %r");
-			eresize();
-			break;
-		case Ekeyboard:
-			ekeyboard(k);
-			redraw();
-			break;
-		case Etimer:
-			if(running){
-				updateball();
-				checkcollision();
-			}
-			redraw();
-			break;
-		}
-	}
+	threadexits(nil);
 }

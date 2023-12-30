@@ -17,12 +17,7 @@ Right click to open up the menu.
 q to quit.
 
 # TODO
-A lot of features are missing, and here's a list to name a few in no particular order:
 * Winning condition
-* Losing
-* Game score
-* Better collision detection
-* tidy up the code maong other bits and pieces
 
 # Installation
 
