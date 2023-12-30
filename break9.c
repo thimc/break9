@@ -25,7 +25,6 @@ enum {
 #define BLOCK_OFFSET 0
 
 #define CLAMP(x,min,max) (x)<(min)?(min):(x)>(max)?(max):(x)
-#define ptstorect(p1,p2) (Rectangle)(Rect(p1.x,p1.y,p1.x+p2.x,p1.y+p2.y))
 
 #define ballsize (int)(Ncellsize/2)
 #define gridwidth (int)(Dx(screen->r))/(Ncellsize)
